@@ -1,0 +1,21 @@
+{
+  "name": "yt-compositor",
+  "version": "0.1.0",
+  "description": "YouTube Download Tool",
+  "main": "yt-compositor.js",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/tmarrinan/yt-compositor.git"
+  },
+  "dependencies": {
+    "colors": "latest",
+    "commander": "latest",
+    "request": "latest",
+    "ytdl-core": "latest"
+  },
+  "keywords": [
+    "ytdl"
+  ],
+  "author": "Thomas Marrinan",
+  "license": "BSD-3-Clause"
+}
