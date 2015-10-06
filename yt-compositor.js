@@ -137,7 +137,8 @@ try {
 							process.stdout.write("Compositing: " + initString(".", (timerCount % 5) + 1));
 							timerCount++;
 						}, 400);
-						exec('ffmpeg -i ' + tmpVideo + ' -i ' + tmpAudio + ' -c:v copy -c:a aac -strict experimental ' + finalOutput, function(error, stdout, stderr) {
+						var audioEnc = info.formats[selectedFormatIdx].container === "mp4" ? "aac" : "vorbis";
+						exec('ffmpeg -i ' + tmpVideo + ' -i ' + tmpAudio + ' -c:v copy -c:a ' + audioEnc + ' -y -strict experimental ' + finalOutput, function(error, stdout, stderr) {
 							if (error) throw error;
 
 							clearInterval(compositeTimer);
