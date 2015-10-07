@@ -1,5 +1,6 @@
 # yt-compositor
 YouTube utility to get info, download, and composite videos.
+
     * Downloads YouTube video
     * Composites video and audio into a single file (if stored separately by YouTube)
     * Saves final video to desired location
