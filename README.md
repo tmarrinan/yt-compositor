@@ -8,7 +8,7 @@ YouTube utility to get info, download, and composite videos.
 `npm install -g yt-compositor`
 
 #### Dependencies
-[FFmpeg](https://www.ffmpeg.org/)
+ * [FFmpeg](https://www.ffmpeg.org/)
 
 #### Usage
 ```
