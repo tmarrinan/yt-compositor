@@ -9,6 +9,7 @@ var request       = require('request');
 var ytdl          = require('ytdl-core');
 
 var exec = child_process.exec;
+var spawn = child_process.spawn;
 
 
 commander
@@ -17,6 +18,7 @@ commander
   .option('-q, --quality <ITAG>',  'Video quality to download. Default: highest')
   .option('-o, --output <FILE>',   'Where to save the file. Default: output.<FILE_TYPE>')
   .option('-w, --with-audio',      'Composite selected video with audio to create one file')
+  .option('-r, --remove-borders',  'Remove black borders in the video if they exist')
   .option('-p, --print-url',       'Print direct download url')
   .parse(process.argv);
 
@@ -45,6 +47,8 @@ try {
 			process.exit(0);
 		}
 
+		var i;
+		var j;
 		var selectedFormatIdx = 0;
 		var selectedFormatRes = 0;
 		var audioFormatIdx = 0;
@@ -54,7 +58,7 @@ try {
 		if (commander.info === true) {
 			console.log("itag".green + "  container".blue + "  resolution".green + "  video enc".blue + "       profile".green + "   audio bitrate".blue + "  audio enc".green);
 		}
-		for (var i=0; i<info.formats.length; i++) {
+		for (i=0; i<info.formats.length; i++) {
 			// find selected format
 			if (commander.quality === undefined) {
 				var res = parseInt(info.formats[i].resolution, 10);
@@ -129,35 +133,147 @@ try {
 			var tmpAudio = path.join(__dirname, "tmp", "TMPA_" + tmpID + "." + info.formats[audioFormatIdx].container);
 			var finalOutput = commander.output || "output." + info.formats[selectedFormatIdx].container;
 			downloadFile(info.formats[selectedFormatIdx].url, tmpVideo, function() {
-				if ((commander.quality === undefined || commander.withAudio === true) && (info.formats[selectedFormatIdx].audioEncoding === undefined || info.formats[selectedFormatIdx].audioEncoding === null)) {
-					downloadFile(info.formats[audioFormatIdx].url, tmpAudio, function() {
-						var timerCount = 0;
-						process.stdout.write("Compositing:");
-						var compositeTimer = setInterval(function() {
-							process.stdout.clearLine();
-							process.stdout.cursorTo(0);
-							process.stdout.write("Compositing: " + initString(".", (timerCount % 5) + 1));
-							timerCount++;
-						}, 400);
-						var audioEnc = info.formats[selectedFormatIdx].container === "mp4" ? "aac" : "vorbis";
-						exec('ffmpeg -i ' + tmpVideo + ' -i ' + tmpAudio + ' -c:v copy -c:a ' + audioEnc + ' -y -strict experimental ' + finalOutput, function(error, stdout, stderr) {
-							if (error) throw error;
+				var outputType = path.extname(finalOutput);
+				var inputVType = path.extname(tmpVideo);
+				var inputAType = path.extname(tmpAudio);
+				var videoEnc = outputType === ".mp4" ? "libx264" : "libvpx-vp9";
+				var audioEnc = outputType === ".mp4" ? "aac" : "libvorbis";
+				var videoMetaData = {width: 0, height: 0, nframes: 0, duration: 0};
+				exec('ffprobe -v quiet -print_format json -show_format -show_streams ' + tmpVideo, function(error, stdout, stderr) {
+					if (error) throw error;
 
-							clearInterval(compositeTimer);
-							process.stdout.clearLine();
-							process.stdout.cursorTo(0);
-							process.stdout.write("Compositing: .....\n");
-							fs.unlinkSync(tmpVideo);
-							fs.unlinkSync(tmpAudio);
+					var meta = JSON.parse(stdout);
+					videoMetaData.duration = parseFloat(meta.format.duration);
+					for (i=0; i<meta.streams.length; i++) {
+						if (meta.streams[i].codec_type === "video") {
+							videoMetaData.width = parseInt(meta.streams[i].width, 10);
+							videoMetaData.height = parseInt(meta.streams[i].height, 10);
+							if (meta.streams[i].nb_frames !== undefined) {
+								videoMetaData.nframes = parseInt(meta.streams[i].nb_frames, 10);
+							}
+							else {
+								var fpsRational = meta.streams[i].avg_frame_rate.split("/");
+								var fps = parseInt(fpsRational[0], 10) / parseInt(fpsRational[1], 10);
+								videoMetaData.nframes = videoMetaData.duration * fps;
+							}
+							break;
+						}
+					}
 
-							console.log("Finished!");
-						})
-					});
-				}
-				else {
-					fs.renameSync(tmpVideo, finalOutput);
-					console.log("Finished!");
-				}
+					if ((commander.quality === undefined || commander.withAudio === true) && (info.formats[selectedFormatIdx].audioEncoding === undefined || info.formats[selectedFormatIdx].audioEncoding === null)) {
+						downloadFile(info.formats[audioFormatIdx].url, tmpAudio, function() {
+							var compositeOptions;
+							if (commander.removeBorders === true) {
+								checkForBlackBorders(tmpVideo, videoMetaData, function(crop) {
+									if (crop !== null) {
+										if (outputType === ".mp4") {
+											compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-vf', crop, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+										}
+										else if (outputType === ".webm") {
+											compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-vf', crop, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+										}
+										compositeVideo(compositeOptions, videoMetaData, function() {
+											fs.unlinkSync(tmpVideo);
+											fs.unlinkSync(tmpAudio);
+											console.log("Finished!");
+										});
+									}
+									else {
+										if (outputType === inputVType) {
+											compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', 'copy', '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+										}
+										else {
+											if (outputType === ".mp4") {
+												compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+											}
+											else if (outputType === ".webm") {
+												compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+											}
+										}
+										compositeVideo(compositeOptions, videoMetaData, function() {
+											fs.unlinkSync(tmpVideo);
+											fs.unlinkSync(tmpAudio);
+											console.log("Finished!");
+										});
+									}
+								});
+							}
+							else {
+								if (outputType === inputVType) {
+									compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', 'copy', '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+								}
+								else {
+									if (outputType === ".mp4") {
+										compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+									}
+									else if (outputType === ".webm") {
+										compositeOptions = ['-i', tmpVideo, '-i', tmpAudio, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+									}
+								}
+								compositeVideo(compositeOptions, videoMetaData, function() {
+									fs.unlinkSync(tmpVideo);
+									fs.unlinkSync(tmpAudio);
+									console.log("Finished!");
+								});
+							}
+						});
+					}
+					else {
+						var compositeOptions;
+						if (commander.removeBorders === true) {
+							checkForBlackBorders(tmpVideo, videoMetaData, function(crop) {
+								if (crop !== null) {
+									if (outputType === ".mp4") {
+										compositeOptions = ['-i', tmpVideo, '-vf', crop, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+									}
+									else if (outputType === ".webm") {
+										compositeOptions = ['-i', tmpVideo, '-vf', crop, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+									}
+									compositeVideo(compositeOptions, videoMetaData, function() {
+										fs.unlinkSync(tmpVideo);
+										console.log("Finished!");
+									});
+								}
+								else {
+									if (outputType === inputVType) {
+										fs.renameSync(tmpVideo, finalOutput);
+										console.log("Finished!");
+									}
+									else {
+										if (outputType === ".mp4") {
+											compositeOptions = ['-i', tmpVideo, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+										}
+										else if (outputType === ".webm") {
+											compositeOptions = ['-i', tmpVideo, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+										}
+										compositeVideo(compositeOptions, videoMetaData, function() {
+											fs.unlinkSync(tmpVideo);
+											console.log("Finished!");
+										});
+									}
+								}
+							});
+						}
+						else {
+							if (outputType === inputVType) {
+								fs.renameSync(tmpVideo, finalOutput);
+								console.log("Finished!");
+							}
+							else {
+								if (outputType === ".mp4") {
+									compositeOptions = ['-i', tmpVideo, '-c:v', videoEnc, '-c:a', audioEnc, '-threads', '4', '-y', '-strict', 'experimental', finalOutput];
+								}
+								else if (outputType === ".webm") {
+									compositeOptions = ['-i', tmpVideo, '-c:v', videoEnc, '-c:a', audioEnc, '-quality', 'good', '-cpu-used', '1', '-qmin', '10', '-qmax', '42', '-threads', '4', '-y', finalOutput];
+								}
+								compositeVideo(compositeOptions, videoMetaData, function() {
+									fs.unlinkSync(tmpVideo);
+									console.log("Finished!");
+								});
+							}
+						}
+					}
+				});
 			});
 		}
 	});
@@ -171,7 +287,6 @@ function downloadFile(reqURL, outFile, callback) {
 	var req;
 	var reqSize = 0;
 	var progress = 0;
-	var percent = 0;
 	process.stdout.write("Downloading: [                                        ]");
 	
 	req = request(reqURL);
@@ -180,7 +295,7 @@ function downloadFile(reqURL, outFile, callback) {
 	});
 	req.on('data', function(chunk) {
 		progress += chunk.length;
-		percent = parseInt(40 * (progress / reqSize), 10);
+		var percent = parseInt(40 * (progress / reqSize), 10);
 		process.stdout.clearLine();
 		process.stdout.cursorTo(0);
 		process.stdout.write("Downloading: [" + initString("#", percent) + initString(" ", 40-percent) + "]");
@@ -192,6 +307,66 @@ function downloadFile(reqURL, outFile, callback) {
 	req.pipe(fs.createWriteStream(outFile));
 }
 
+function checkForBlackBorders(video, metadata, callback) {
+	var seekTime = parseInt(metadata.duration / 2, 10);
+
+	exec('ffmpeg -ss ' + seekTime + ' -i ' + video + ' -vframes 10 -vf cropdetect -f null -', function(error, stdout, stderr) {
+		if (error) throw error;
+
+		var lines = stderr.split("\n");
+		var crop = [];
+		for (j=0; j<lines.length; j++) {
+			if (lines[j].indexOf('Parsed_cropdetect_0') >= 0) {
+				crop.push(lines[j].split(" ")[13]);
+			}
+		}
+		if (allEqual(crop) === true) {
+			var dims = crop[0].split("=")[1].split(":");
+			if (parseInt(dims[0], 10) < (metadata.width-8) || parseInt(dims[1], 10) < (metadata.height-8)) {
+				callback(crop[0]);
+			}
+			else {
+				callback(null);
+			}
+		}
+		else {
+			callback(null);
+		}
+	});
+}
+
+function compositeVideo(options, metadata, callback) {
+	process.stdout.write("Compositing: [                                        ]");
+
+	var cmd = spawn('ffmpeg', options);
+	cmd.on('error', function(err) {
+		throw err;
+	});
+	cmd.stdout.on('data', function (data) {
+		//console.log('stdout: ' + data);
+	});
+
+	cmd.stderr.on('data', function (data) {
+		var output = data.toString();
+		var framePos = output.indexOf("frame=");
+		if (framePos >= 0) {
+			var tmpout = output.substring(framePos+6, output.length).trim();
+			var frame = parseInt(tmpout.substring(0, tmpout.indexOf(" ")), 10);
+			var percent = parseInt(40 * (frame / metadata.nframes), 10);
+			process.stdout.clearLine();
+			process.stdout.cursorTo(0);
+			process.stdout.write("Compositing: [" + initString("#", percent) + initString(" ", 40-percent) + "]");
+		}
+	});
+
+	cmd.on('close', function (code) {
+		process.stdout.clearLine();
+		process.stdout.cursorTo(0);
+		process.stdout.write("Compositing: [########################################]\n");
+		callback();
+	});
+}
+
 function initString(char, length) {
 	var i;
 	var str = "";
@@ -199,6 +374,15 @@ function initString(char, length) {
 		str += char;
 	}
 	return str;
+}
+
+function allEqual(arr) {
+	var i;
+	for (i=1; i<arr.length; i++) {
+		if (arr[i] !== arr[0])
+			return false;
+	}
+	return true;
 }
 
 function guid() {
