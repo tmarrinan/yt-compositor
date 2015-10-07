@@ -4,13 +4,13 @@ YouTube utility to get info, download, and composite videos.
  * Composites video and audio into a single file (if stored separately by YouTube)
  * Saves final video to desired location
 
-### Install
+#### Install
 `npm install -g yt-compositor`
 
-### Dependencies
+#### Dependencies
 [FFmpeg](https://www.ffmpeg.org/)
 
-### Usage
+#### Usage
 ```
   Usage: ytcomp [options] <url ...>
 
