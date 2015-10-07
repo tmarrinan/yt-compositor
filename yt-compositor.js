@@ -1,3 +1,5 @@
+#! /usr/bin/env node
+
 var colors        = require('colors');
 var child_process = require('child_process');
 var commander     = require('commander');
