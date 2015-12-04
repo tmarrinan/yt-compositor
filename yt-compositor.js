@@ -23,7 +23,7 @@ commander
   .parse(process.argv);
 
 if (commander.args.length < 1) {
-	console.log("Usage: ytdl-node [options] <url ...>");
+	console.log("Usage: ytcomp [options] <url ...>");
 	process.exit(0);
 }
 
